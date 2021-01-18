@@ -33,7 +33,7 @@ dependencies {
     implementation "com.github.topjohnwu.libsu:core:3.0.2"
 
     // APK Signer
-    implementation 'com.android.tools.build:apksig:4.1.0'
+    implementation "com.android.tools.build:apksig:${versions.buildToolsVersion}"
 
     // Kotlin support
     api "org.jetbrains.kotlin:kotlin-stdlib:${versions.kotlinVersion}"
