@@ -1,12 +1,12 @@
 ext.versions = [
         minSdk             : 24,
-        targetSdk          : 30,
-        compileSdk         : 30,
+        targetSdk          : 34,
+        compileSdk         : 34,
 
         libraryVersion     : '1.0.0',
         libraryVersionCode : 1,
 
-        buildToolsVersion  : '4.1.1',
-        kotlinVersion      : '1.4.21',
-        coroutinesVersion  : '1.4.2',
+        buildToolsVersion  : '8.3.1',
+        kotlinVersion      : '1.9.22',
+        coroutinesVersion  : '1.7.3',
 ]

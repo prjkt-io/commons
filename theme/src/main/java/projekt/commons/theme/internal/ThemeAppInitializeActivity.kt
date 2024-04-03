@@ -97,7 +97,7 @@ internal class ThemeAppInitializeActivity : Activity() {
                 is PieRootBackend -> {
                     Log.d(TAG, "Prepare for using Android P backend")
                     // Request and check root permission
-                    if (backend.checkMagisk()) {
+                    if (backend.checkMagisk() || backend.checkKsu() || backend.checkApatch()) {
                         // Close cached shell to refresh root access status
                         Shell.getShell().close()
                         if (Shell.rootAccess()) {

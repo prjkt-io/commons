@@ -14,8 +14,7 @@ import projekt.commons.theme.ThemeApplication
 import projekt.commons.theme.internal.SamsungRootFixGenerator
 import projekt.commons.theme.internal.getOneUiVersion
 import projekt.commons.theme.internal.isPackageInstalled
-import java.util.ArrayList
-import java.util.HashMap
+
 
 /**
  * Root backend for Pie onwards
@@ -223,7 +222,8 @@ internal class PieRootBackend : Backend {
             val command = "set -ex \n" +
                     "mkdir -p $MAGISK_MODULE_DIR; " +
                     "printf " +
-                    "'name=$appLabel Overlay Helper\n" +
+                    "'id=${ThemeApplication.instance.packageName}\n" +
+                    "name=$appLabel Overlay Helper\n" +
                     "version=${packageInfo.versionName}\n" +
                     "versionCode=${PackageInfoCompat.getLongVersionCode(packageInfo)}\n" +
                     "author=$appLabel\n" +
@@ -252,6 +252,14 @@ internal class PieRootBackend : Backend {
             }
         }
         return -1
+    }
+
+    internal fun checkKsu(): Boolean {
+        return Shell.su("/data/adb/ksud -h").exec().isSuccess
+    }
+
+    internal fun checkApatch(): Boolean {
+        return Shell.su("apd --help").exec().isSuccess
     }
 
     companion object {

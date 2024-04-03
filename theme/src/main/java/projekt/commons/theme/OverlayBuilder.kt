@@ -15,9 +15,11 @@ import projekt.commons.buildtools.BuildTools.getAapt
 import projekt.commons.buildtools.BuildTools.getZipalign
 import projekt.commons.theme.ThemeApp.OVERLAY_PERMISSION
 import projekt.commons.theme.ThemeApp.SAMSUNG_OVERLAY_PERMISSION
+import projekt.commons.theme.ThemeApp.isAtleastR
 import projekt.commons.theme.internal.*
 import projekt.commons.theme.internal.METADATA_INSTALL_TIMESTAMP
 import java.io.*
+import java.util.*
 
 /**
  * A class for building overlays.
@@ -44,7 +46,7 @@ class OverlayBuilder(
     private val workDir = File(ThemeApplication.instance.cacheDir, "overlay_builder")
 
     private var extraBasePackagePath = emptyArray<String>()
-    private var resourceDirs = emptyArray<String>()
+    private var resourceDirs = emptyArray<File>()
     private var assetDir: String? = null
 
     // These packages will be exempt from having the SAMSUNG_OVERLAY_PERMISSION added onto it
@@ -83,7 +85,7 @@ class OverlayBuilder(
      * @param resDir directory of resources.
      */
     fun addResourceDir(resDir: File) {
-        resourceDirs += resDir.absolutePath
+        resourceDirs += resDir
     }
 
     /**
@@ -108,6 +110,7 @@ class OverlayBuilder(
     fun exec(): Result {
         workDir.mkdirs()
         generateManifest()
+        convertResourceIds()
         val result = compileOverlay()
         workDir.deleteRecursively()
         return result
@@ -184,6 +187,50 @@ class OverlayBuilder(
         }
     }
 
+    /**
+     * Converts any explicit reference ID names inside [resourceDirs]. Will only run on API 30+
+     * Example conversion:
+     * @*org.mozilla.firefox:color/background_material_dark -> @7F06003C
+     */
+    private val resourceNameRegex = "@\\*((?:[A-Za-z][A-Za-z\\d_]*\\.)+[A-Za-z][A-Za-z\\d_]*):(anim|color|drawable|layout|menu|string|style|font|bool|dimen|id|integer|array)/([A-Za-z_]+)".toRegex()
+    private fun convertResourceIds() {
+        if (!isAtleastR) return
+
+        resourceDirs.forEach { dir ->
+            dir.walkTopDown().forEach { toCheck ->
+                if (toCheck.isFile && toCheck.extension == "xml") {
+                    var contentToCheck = toCheck.readText()
+                    val replacedStrings = mutableListOf<String>()
+
+                    // Where the magic happens
+                    for (matchResult in resourceNameRegex.findAll(contentToCheck)) {
+                        if (replacedStrings.contains(matchResult.value)) {
+                            // Replaced this before
+                            continue
+                        }
+
+                        val resourcePackage = matchResult.groups[1]?.value ?: continue
+                        val resourceType = matchResult.groups[2]?.value ?: continue
+                        val resourceName = matchResult.groups[3]?.value ?: continue
+                        val id = ThemeApplication.instance
+                                .createPackageContext(resourcePackage, 0).resources
+                                .getIdentifier(resourceName, resourceType, resourcePackage)
+                        if (id != 0) {
+                            val newRef = "resourceId:0x${Integer.toHexString(id).toUpperCase(Locale.ROOT)}"
+                            contentToCheck = contentToCheck.replace(matchResult.value, newRef)
+                            replacedStrings += matchResult.value
+                        }
+                    }
+
+                    if (replacedStrings.isNotEmpty()) {
+                        // Overwrite new content to file
+                        toCheck.writeText(contentToCheck)
+                    }
+                }
+            }
+        }
+    }
+
     private fun compileOverlay(): Result {
         val unsigned = File(outDir, "$packageName-unsigned.apk")
         val aligned = File(outDir, "$packageName-unsigned-aligned.apk")
@@ -210,7 +257,7 @@ class OverlayBuilder(
                 return Result.Failure("Resource directory cannot be empty!")
             }
             resourceDirs.forEach { dir ->
-                command.append("-S ").append(dir).append(" ")
+                command.append("-S ").append(dir.absolutePath).append(" ")
             }
 
             // Add asset directory if set

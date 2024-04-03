@@ -49,6 +49,9 @@ object ThemeApp {
     internal const val RESULT_ANDROMEDA_INACTIVE = 7
     internal const val RESULT_SUBSTRATUM_SERVICE_DENIED = 8
 
+    internal val isAtleastPie = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+    internal val isAtleastR = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+
     internal val isSamsung: Boolean
         get() {
             val listOfFeatures = ThemeApplication.instance.packageManager.systemSharedLibraryNames

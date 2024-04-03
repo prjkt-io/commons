@@ -8,10 +8,10 @@ package projekt.commons.theme
 
 import android.app.Application
 import android.content.pm.PackageManager.PERMISSION_GRANTED
-import android.os.Build
 import com.topjohnwu.superuser.Shell
 import projekt.andromeda.client.AndromedaClient
 import projekt.andromeda.client.AndromedaClient.ACCESS_PERMISSION
+import projekt.commons.theme.ThemeApp.isAtleastPie
 import projekt.substratum.platform.SubstratumServiceBridge
 import projekt.commons.theme.ThemeApp.isSamsung
 import projekt.commons.theme.ThemeApp.isSynergyInstalled
@@ -32,7 +32,6 @@ open class ThemeApplication : Application() {
 
     companion object {
         private const val SHELL_TIMEOUT = 10L
-        private val isAtleastPie = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
 
         internal lateinit var instance: ThemeApplication
             private set
@@ -64,7 +63,8 @@ open class ThemeApplication : Application() {
             rootSupported: Boolean = false
         ): Boolean {
             Shell.enableVerboseLogging = instance.isApplicationDebugable
-            val builder = Shell.Builder.create().setTimeout(SHELL_TIMEOUT)
+            val builder = Shell.Builder.create()
+                .setTimeout(SHELL_TIMEOUT)
             // TODO: Choose used backend if multiple supported
             backend = if (andromedaSamsungSupported && isSamsung && !isAtleastPie && isAndromeda &&
                     AndromedaClient.initialize(instance)) {
