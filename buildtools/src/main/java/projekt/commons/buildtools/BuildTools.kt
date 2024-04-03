@@ -22,6 +22,11 @@ object BuildTools {
     fun getAapt(context: Context) = File(getBinariesDir(context), "aapt")
 
     /**
+     * Returns AAPT2 object in form of [File]
+     */
+    fun getAapt2(context: Context) = File(getBinariesDir(context), "aapt2")
+
+    /**
      * Returns Zipalign object in form of [File]
      */
     fun getZipalign(context: Context) = File(getBinariesDir(context), "zipalign")
@@ -41,6 +46,11 @@ object BuildTools {
         with(getAapt(context)) {
             delete()
             val lib = File(context.applicationInfo.nativeLibraryDir, "libaapt.so")
+            Shell.exec("ln -sf $lib $this")
+        }
+        with(getAapt2(context)) {
+            delete()
+            val lib = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
             Shell.exec("ln -sf $lib $this")
         }
         with(getZipalign(context)) {

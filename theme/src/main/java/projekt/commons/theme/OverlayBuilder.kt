@@ -9,17 +9,23 @@ package projekt.commons.theme
 import android.os.Build
 import android.util.ArrayMap
 import android.util.Xml
-import androidx.preference.PreferenceManager
 import com.topjohnwu.superuser.Shell
 import projekt.commons.buildtools.BuildTools.getAapt
+import projekt.commons.buildtools.BuildTools.getAapt2
 import projekt.commons.buildtools.BuildTools.getZipalign
 import projekt.commons.theme.ThemeApp.OVERLAY_PERMISSION
 import projekt.commons.theme.ThemeApp.SAMSUNG_OVERLAY_PERMISSION
 import projekt.commons.theme.ThemeApp.isAtleastR
-import projekt.commons.theme.internal.*
 import projekt.commons.theme.internal.METADATA_INSTALL_TIMESTAMP
-import java.io.*
-import java.util.*
+import projekt.commons.theme.internal.attribute
+import projekt.commons.theme.internal.document
+import projekt.commons.theme.internal.element
+import projekt.commons.theme.internal.signApk
+import java.io.BufferedReader
+import java.io.File
+import java.io.FileWriter
+import java.io.InputStreamReader
+import java.util.Locale
 
 /**
  * A class for building overlays.
@@ -44,10 +50,17 @@ class OverlayBuilder(
 ) {
 
     private val workDir = File(ThemeApplication.instance.cacheDir, "overlay_builder")
+    private val manifest = File(workDir, "AndroidManifest.xml")
 
     private var extraBasePackagePath = emptyArray<String>()
     private var resourceDirs = emptyArray<File>()
     private var assetDir: String? = null
+
+    private val unsigned = File(outDir, "$packageName-unsigned.apk")
+    private val aligned = File(outDir, "$packageName-unsigned-aligned.apk")
+    private val signed = File(outDir, "$packageName.apk")
+
+    private var useAapt2 = false
 
     // These packages will be exempt from having the SAMSUNG_OVERLAY_PERMISSION added onto it
     private val needSamsungPermission: Boolean
@@ -99,6 +112,10 @@ class OverlayBuilder(
      */
     fun setAssetDir(_assetDir: File) {
         assetDir = _assetDir.absolutePath
+    }
+
+    fun setUseAapt2(_useAapt2: Boolean) {
+        useAapt2 = _useAapt2
     }
 
     /**
@@ -182,7 +199,7 @@ class OverlayBuilder(
             }
         }
 
-        FileWriter(File(workDir, "AndroidManifest.xml")).use { fw ->
+        FileWriter(manifest).use { fw ->
             fw.write(str)
         }
     }
@@ -216,7 +233,7 @@ class OverlayBuilder(
                                 .createPackageContext(resourcePackage, 0).resources
                                 .getIdentifier(resourceName, resourceType, resourcePackage)
                         if (id != 0) {
-                            val newRef = "resourceId:0x${Integer.toHexString(id).toUpperCase(Locale.ROOT)}"
+                            val newRef = "resourceId:0x${Integer.toHexString(id).uppercase(Locale.ROOT)}"
                             contentToCheck = contentToCheck.replace(matchResult.value, newRef)
                             replacedStrings += matchResult.value
                         }
@@ -232,86 +249,21 @@ class OverlayBuilder(
     }
 
     private fun compileOverlay(): Result {
-        val unsigned = File(outDir, "$packageName-unsigned.apk")
-        val aligned = File(outDir, "$packageName-unsigned-aligned.apk")
-        val signed = File(outDir, "$packageName.apk")
-
         if (!outDir.isDirectory) {
             if (!outDir.mkdirs()) {
                 return Result.Failure("Failed to create overlay cache directory")
             }
         }
 
+        if (resourceDirs.isEmpty()) {
+            return Result.Failure("Resource directory cannot be empty!")
+        }
+
         // Compile unsigned APK
-        var doLegacyCompile = false
-        loop@ do {
-            val command = StringBuilder()
-            // Make sure this will call AAPT duh
-            command.append(getAapt(ThemeApplication.instance).absolutePath).append(" p ")
-
-            // The manifest
-            command.append("-M ").append(workDir.absolutePath).append("/AndroidManifest.xml ")
-
-            // Add resource directories
-            if (resourceDirs.isEmpty()) {
-                return Result.Failure("Resource directory cannot be empty!")
-            }
-            resourceDirs.forEach { dir ->
-                command.append("-S ").append(dir.absolutePath).append(" ")
-            }
-
-            // Add asset directory if set
-            if (!assetDir.isNullOrEmpty()) {
-                command.append("-A ").append(assetDir).append(" ")
-            }
-
-            // Compile against framework by default and target package
-            // when we're not legacy compiling
-            command.append("-I /system/framework/framework-res.apk ")
-            if (!doLegacyCompile) {
-                extraBasePackagePath.forEach { path ->
-                    if (File(path).exists()) {
-                        command.append("-I ").append(path).append(" ")
-                    }
-                }
-            }
-
-            // Specify the output dir
-            command.append("-F ").append(unsigned.absolutePath).append(" ")
-            command.append("--auto-add-overlay ")
-            command.append("-f ")
-            command.append('\n')
-
-            // Run command and see
-            var error = ""
-            val process = Runtime.getRuntime().exec(command.toString())
-            process.waitFor()
-            BufferedReader(InputStreamReader(process.errorStream)).use { err ->
-                err.forEachLine { line ->
-                    if (line.contains("types not allowed")) {
-                        val forceNewCompiler = PreferenceManager
-                            .getDefaultSharedPreferences(ThemeApplication.instance)
-                            .getBoolean("force_new_compiler", false)
-                        if (!doLegacyCompile && !forceNewCompiler) {
-                            doLegacyCompile = true
-                        } else {
-                            // Still failed with legacy compile, throw error
-                            error = "$error\n${line}"
-                        }
-                    } else {
-                        // If output exists then compilation is failed
-                        error = "$error\n${line}"
-                    }
-                }
-            }
-            process.destroy()
-            if (doLegacyCompile) {
-                break@loop
-            }
-            if (error.isNotEmpty()) {
-                return Result.Failure(error)
-            }
-        } while (doLegacyCompile)
+        val result = if (useAapt2) aapt2CompileUnsignedApk() else aaptCompileUnsignedApk()
+        if (result is Result.Failure) {
+            return result
+        }
 
         // Just to make sure the compile is going fine so far
         if (!unsigned.isFile) {
@@ -335,6 +287,135 @@ class OverlayBuilder(
         aligned.delete()
 
         return Result.Success(signed.absolutePath)
+    }
+
+    private fun aaptCompileUnsignedApk(): Result {
+        val command = StringBuilder()
+        // Make sure this will call AAPT duh
+        command.append(getAapt(ThemeApplication.instance).absolutePath).append(" p ")
+
+        // The manifest
+        command.append("-M ").append(manifest.absolutePath).append(" ")
+
+        // Add resource directories
+        resourceDirs.forEach { dir ->
+            command.append("-S ").append(dir.absolutePath).append(" ")
+        }
+
+        // Add asset directory if set
+        if (!assetDir.isNullOrEmpty()) {
+            command.append("-A ").append(assetDir).append(" ")
+        }
+
+        // Compile against framework by default and target package
+        // when we're not legacy compiling
+        command.append("-I /system/framework/framework-res.apk ")
+        extraBasePackagePath.forEach { path ->
+            if (File(path).exists()) {
+                command.append("-I ").append(path).append(" ")
+            }
+        }
+
+        // Specify the output dir
+        command.append("-F ").append(unsigned.absolutePath).append(" ")
+        command.append("--auto-add-overlay ")
+        command.append("-f ")
+        command.append('\n')
+
+        // Run command and see
+        var error = ""
+        val process = Runtime.getRuntime().exec(command.toString())
+        process.waitFor()
+        BufferedReader(InputStreamReader(process.errorStream)).use { err ->
+            err.forEachLine { line ->
+                error = "$error\n${line}"
+            }
+        }
+        process.destroy()
+        if (error.isNotEmpty()) {
+            return Result.Failure(error)
+        }
+        return Result.Success(unsigned.absolutePath)
+    }
+
+    private fun aapt2CompileUnsignedApk(): Result {
+        var command: String
+        var error: String
+        var process: Process
+
+        // Run compile for each resource dir
+        val flatPacks = arrayOfNulls<File>(resourceDirs.size)
+        resourceDirs.forEachIndexed { i, dir ->
+            flatPacks[i] = File(workDir, "${dir.absolutePath.split("/").last()}.zip")
+            command = StringBuilder().apply {
+                append("${getAapt2(ThemeApplication.instance).absolutePath} compile ")
+
+                // Add resource directories
+                append("--dir $dir ")
+
+                // Output
+                append("-o ${flatPacks[i]}")
+            }.toString()
+            error = ""
+            process = Runtime.getRuntime().exec(command)
+            process.waitFor()
+            BufferedReader(InputStreamReader(process.errorStream)).use { err ->
+                err.forEachLine { line ->
+                    // If output exists then compilation is failed
+                    error = "$error\n${line}"
+                }
+            }
+            process.destroy()
+            if (error.isNotEmpty()) {
+                return Result.Failure("compile error:\n$error")
+            }
+        }
+
+        // Run link
+        command = StringBuilder().apply {
+            append("${getAapt2(ThemeApplication.instance)} link ")
+
+            // Add manifest
+            append("--manifest ${manifest.absolutePath} ")
+
+            // Compile against framework by default and target package
+            append("-I /system/framework/framework-res.apk ")
+            extraBasePackagePath.forEach { path ->
+                if (File(path).exists()) {
+                    append("-I $path ")
+                }
+            }
+
+            // Add asset directory if set
+            if (!assetDir.isNullOrEmpty()) {
+                append("-A $assetDir ")
+            }
+
+            // Add flat packs
+            flatPacks.forEach {
+                append("-R $it ")
+            }
+
+            // Output
+            append("--auto-add-overlay ")
+            append("--no-resource-deduping ")
+            append("-o $unsigned")
+        }.toString()
+        error = ""
+        process = Runtime.getRuntime().exec(command)
+        process.waitFor()
+        BufferedReader(InputStreamReader(process.errorStream)).use { err ->
+            err.forEachLine { line ->
+                // If output exists then compilation is failed
+                error = "$error\n${line}"
+            }
+        }
+        process.destroy()
+        if (error.isNotEmpty()) {
+            return Result.Failure("link error:\n$error")
+        }
+
+        return Result.Success(unsigned.absolutePath)
     }
 
     /**
