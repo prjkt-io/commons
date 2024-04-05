@@ -25,7 +25,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.FileWriter
 import java.io.InputStreamReader
-import java.util.Locale
+import java.util.*
 
 /**
  * A class for building overlays.
@@ -290,51 +290,70 @@ class OverlayBuilder(
     }
 
     private fun aaptCompileUnsignedApk(): Result {
-        val command = StringBuilder()
-        // Make sure this will call AAPT duh
-        command.append(getAapt(ThemeApplication.instance).absolutePath).append(" p ")
+        // Compile unsigned APK
+        var doLegacyCompile = false
+        loop@ do {
+            val command = StringBuilder()
+            // Make sure this will call AAPT duh
+            command.append(getAapt(ThemeApplication.instance).absolutePath).append(" p ")
 
-        // The manifest
-        command.append("-M ").append(manifest.absolutePath).append(" ")
+            // The manifest
+            command.append("-M ").append(manifest.absolutePath).append(" ")
 
-        // Add resource directories
-        resourceDirs.forEach { dir ->
-            command.append("-S ").append(dir.absolutePath).append(" ")
-        }
-
-        // Add asset directory if set
-        if (!assetDir.isNullOrEmpty()) {
-            command.append("-A ").append(assetDir).append(" ")
-        }
-
-        // Compile against framework by default and target package
-        // when we're not legacy compiling
-        command.append("-I /system/framework/framework-res.apk ")
-        extraBasePackagePath.forEach { path ->
-            if (File(path).exists()) {
-                command.append("-I ").append(path).append(" ")
+            // Add resource directories
+            resourceDirs.forEach { dir ->
+                command.append("-S ").append(dir.absolutePath).append(" ")
             }
-        }
 
-        // Specify the output dir
-        command.append("-F ").append(unsigned.absolutePath).append(" ")
-        command.append("--auto-add-overlay ")
-        command.append("-f ")
-        command.append('\n')
-
-        // Run command and see
-        var error = ""
-        val process = Runtime.getRuntime().exec(command.toString())
-        process.waitFor()
-        BufferedReader(InputStreamReader(process.errorStream)).use { err ->
-            err.forEachLine { line ->
-                error = "$error\n${line}"
+            // Add asset directory if set
+            if (!assetDir.isNullOrEmpty()) {
+                command.append("-A ").append(assetDir).append(" ")
             }
-        }
-        process.destroy()
-        if (error.isNotEmpty()) {
-            return Result.Failure(error)
-        }
+
+            // Compile against framework by default and target package
+            // when we're not legacy compiling
+            command.append("-I /system/framework/framework-res.apk ")
+            if (!doLegacyCompile) {
+                extraBasePackagePath.forEach { path ->
+                    if (File(path).exists()) {
+                        command.append("-I ").append(path).append(" ")
+                    }
+                }
+            }
+
+            // Specify the output dir
+            command.append("-F ").append(unsigned.absolutePath).append(" ")
+            command.append("--auto-add-overlay ")
+            command.append("-f ")
+            command.append('\n')
+
+            // Run command and see
+            var error = ""
+            val process = Runtime.getRuntime().exec(command.toString())
+            process.waitFor()
+            BufferedReader(InputStreamReader(process.errorStream)).use { err ->
+                err.forEachLine { line ->
+                    if (line.contains("types not allowed")) {
+                        if (!doLegacyCompile) {
+                            doLegacyCompile = true
+                        } else {
+                            // Still failed with legacy compile, throw error
+                            error = "$error\n${line}"
+                        }
+                    } else {
+                        // If output exists then compilation is failed
+                        error = "$error\n${line}"
+                    }
+                }
+            }
+            process.destroy()
+            if (doLegacyCompile) {
+                break@loop
+            }
+            if (error.isNotEmpty()) {
+                return Result.Failure(error)
+            }
+        } while (doLegacyCompile)
         return Result.Success(unsigned.absolutePath)
     }
 
@@ -372,49 +391,66 @@ class OverlayBuilder(
         }
 
         // Run link
-        command = StringBuilder().apply {
-            append("${getAapt2(ThemeApplication.instance)} link ")
+        var doLegacyCompile = false
+        loop@ do {
+            command = StringBuilder().apply {
+                append("${getAapt2(ThemeApplication.instance)} link ")
 
-            // Add manifest
-            append("--manifest ${manifest.absolutePath} ")
+                // Add manifest
+                append("--manifest ${manifest.absolutePath} ")
 
-            // Compile against framework by default and target package
-            append("-I /system/framework/framework-res.apk ")
-            extraBasePackagePath.forEach { path ->
-                if (File(path).exists()) {
-                    append("-I $path ")
+                // Compile against framework by default and target package
+                append("-I /system/framework/framework-res.apk ")
+                if (!doLegacyCompile) {
+                    extraBasePackagePath.forEach { path ->
+                        if (File(path).exists()) {
+                            append("-I $path ")
+                        }
+                    }
+                }
+
+                // Add asset directory if set
+                if (!assetDir.isNullOrEmpty()) {
+                    append("-A $assetDir ")
+                }
+
+                // Add flat packs
+                flatPacks.forEach {
+                    append("-R $it ")
+                }
+
+                // Output
+                append("--auto-add-overlay ")
+                append("--no-resource-deduping ")
+                append("--no-resource-removal ")
+                append("-o $unsigned")
+            }.toString()
+            error = ""
+            process = Runtime.getRuntime().exec(command)
+            process.waitFor()
+            BufferedReader(InputStreamReader(process.errorStream)).use { err ->
+                err.forEachLine { line ->
+                    if (line.contains("types not allowed")) {
+                        if (!doLegacyCompile) {
+                            doLegacyCompile = true
+                        } else {
+                            // Still failed with legacy compile, throw error
+                            error = "$error\n${line}"
+                        }
+                    } else {
+                        // If output exists then compilation is failed
+                        error = "$error\n${line}"
+                    }
                 }
             }
-
-            // Add asset directory if set
-            if (!assetDir.isNullOrEmpty()) {
-                append("-A $assetDir ")
+            process.destroy()
+            if (doLegacyCompile) {
+                break@loop
             }
-
-            // Add flat packs
-            flatPacks.forEach {
-                append("-R $it ")
+            if (error.isNotEmpty()) {
+                return Result.Failure("link error:\n$error")
             }
-
-            // Output
-            append("--auto-add-overlay ")
-            append("--no-resource-deduping ")
-            append("-o $unsigned")
-        }.toString()
-        error = ""
-        process = Runtime.getRuntime().exec(command)
-        process.waitFor()
-        BufferedReader(InputStreamReader(process.errorStream)).use { err ->
-            err.forEachLine { line ->
-                // If output exists then compilation is failed
-                error = "$error\n${line}"
-            }
-        }
-        process.destroy()
-        if (error.isNotEmpty()) {
-            return Result.Failure("link error:\n$error")
-        }
-
+        } while (doLegacyCompile)
         return Result.Success(unsigned.absolutePath)
     }
 
