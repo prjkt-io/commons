@@ -364,31 +364,33 @@ class OverlayBuilder(
 
         // Run compile for each resource dir
         val flatPacks = arrayOfNulls<File>(resourceDirs.size)
-        resourceDirs.forEachIndexed { i, dir ->
-            flatPacks[i] = File(workDir, "${dir.absolutePath.split("/").last()}.zip")
-            command = StringBuilder().apply {
-                append("${getAapt2(ThemeApplication.instance).absolutePath} compile ")
+        resourceDirs
+            .reversed() // AAPT2 resource priority list is the opposite of AAPT
+            .forEachIndexed { i, dir ->
+                flatPacks[i] = File(workDir, "${dir.absolutePath.split("/").last()}.zip")
+                command = StringBuilder().apply {
+                    append("${getAapt2(ThemeApplication.instance).absolutePath} compile ")
 
-                // Add resource directories
-                append("--dir $dir ")
+                    // Add resource directories
+                    append("--dir $dir ")
 
-                // Output
-                append("-o ${flatPacks[i]}")
-            }.toString()
-            error = ""
-            process = Runtime.getRuntime().exec(command)
-            process.waitFor()
-            BufferedReader(InputStreamReader(process.errorStream)).use { err ->
-                err.forEachLine { line ->
-                    // If output exists then compilation is failed
-                    error = "$error\n${line}"
+                    // Output
+                    append("-o ${flatPacks[i]}")
+                }.toString()
+                error = ""
+                process = Runtime.getRuntime().exec(command)
+                process.waitFor()
+                BufferedReader(InputStreamReader(process.errorStream)).use { err ->
+                    err.forEachLine { line ->
+                        // If output exists then compilation is failed
+                        error = "$error\n${line}"
+                    }
+                }
+                process.destroy()
+                if (error.isNotEmpty()) {
+                    return Result.Failure("compile error:\n$error")
                 }
             }
-            process.destroy()
-            if (error.isNotEmpty()) {
-                return Result.Failure("compile error:\n$error")
-            }
-        }
 
         // Run link
         var doLegacyCompile = false
@@ -421,7 +423,6 @@ class OverlayBuilder(
 
                 // Output
                 append("--auto-add-overlay ")
-                append("--no-resource-deduping ")
                 append("--no-resource-removal ")
                 append("-o $unsigned")
             }.toString()
