@@ -423,6 +423,8 @@ class OverlayBuilder(
 
                 // Output
                 append("--auto-add-overlay ")
+                append("--no-auto-version ")
+                append("--no-resource-deduping ")
                 append("--no-resource-removal ")
                 append("-o $unsigned")
             }.toString()
